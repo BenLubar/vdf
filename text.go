@@ -334,6 +334,7 @@ func readToken(r *bufio.Reader) (prefix, s string, wasQuoted, wasConditional boo
 	for {
 		c, err = r.ReadByte()
 		if err == io.EOF {
+			err = nil
 			break
 		}
 		if err != nil {
