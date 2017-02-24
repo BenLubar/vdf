@@ -1,8 +1,12 @@
-package vdf
+package vdf_test
 
-import "encoding"
+import (
+	"encoding"
 
-var _ encoding.TextMarshaler = (*Node)(nil)
-var _ encoding.TextUnmarshaler = (*Node)(nil)
-var _ encoding.BinaryMarshaler = (*Node)(nil)
-var _ encoding.BinaryUnmarshaler = (*Node)(nil)
+	"github.com/BenLubar/vdf"
+)
+
+var _ encoding.TextMarshaler = (*vdf.Node)(nil)
+var _ encoding.TextUnmarshaler = (*vdf.Node)(nil)
+var _ encoding.BinaryMarshaler = (*vdf.Node)(nil)
+var _ encoding.BinaryUnmarshaler = (*vdf.Node)(nil)

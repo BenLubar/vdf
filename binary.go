@@ -23,6 +23,10 @@ const (
 )
 
 func (n *Node) MarshalBinary() ([]byte, error) {
+	if n == nil {
+		return nil, nil
+	}
+
 	var buf bytes.Buffer
 
 	if err := n.writeAsBinary(&buf); err != nil {
@@ -106,26 +110,25 @@ func (n *Node) writeAsBinary(w io.Writer) error {
 			return err
 		}
 	}
-	if n != nil {
-		if _, err := w.Write([]byte{ptNullMarker}); err != nil {
-			return err
-		}
+	if _, err := w.Write([]byte{ptNullMarker}); err != nil {
+		return err
 	}
 	return nil
 }
 
 func (n *Node) UnmarshalBinary(b []byte) error {
 	*n = Node{}
-	return n.readAsBinary(bufio.NewReader(bytes.NewReader(b)))
+	return n.readAsBinary(bufio.NewReader(bytes.NewReader(b)), nil)
 }
 
-func (n *Node) readAsBinary(r *bufio.Reader) error {
+func (n *Node) readAsBinary(r *bufio.Reader, parent *Node) error {
 	packType, err := r.ReadByte()
 	if err != nil {
 		return err
 	}
 
 	for c := n; packType != ptNullMarker; {
+		c.parent = parent
 		name, err := r.ReadString(0)
 		if err != nil {
 			return err
@@ -136,8 +139,12 @@ func (n *Node) readAsBinary(r *bufio.Reader) error {
 		case ptNone:
 			var sub Node
 			c.Append(&sub)
-			if err := sub.readAsBinary(r); err != nil {
+			sub.parent = nil
+			if err := sub.readAsBinary(r, c); err != nil {
 				return err
+			}
+			if sub.parent == nil {
+				c.child = nil
 			}
 		case ptString:
 			v, err := r.ReadString(0)
@@ -201,7 +208,6 @@ func (n *Node) readAsBinary(r *bufio.Reader) error {
 		}
 
 		var peer Node
-		peer.parent = c.parent
 		c.next = &peer
 		peer.prev = c
 		c = &peer
