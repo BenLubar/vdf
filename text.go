@@ -25,10 +25,24 @@ func (n *Node) MarshalText() ([]byte, error) {
 }
 
 func (n *Node) writeIndent(w io.Writer, indent int) error {
-	if n.cf != nil {
-		return n.writeCustom(w, indent)
+	for c := n; c != nil; c = c.NextChild() {
+		var err error
+		if c.cf != nil {
+			err = c.writeCustom(w, indent)
+		} else {
+			err = c.writeDefault(w, indent)
+		}
+		if err != nil {
+			return err
+		}
+		if c.parent != nil {
+			break
+		}
 	}
+	return nil
+}
 
+func (n *Node) writeDefault(w io.Writer, indent int) error {
 	if _, err := io.WriteString(w, strings.Repeat("\t", indent)); err != nil {
 		return err
 	}
@@ -174,7 +188,7 @@ func (n *Node) readAsText(r *bufio.Reader) error {
 			return errClose(prefix)
 		}
 		if !wasQuoted && s == "{" {
-			return fmt.Errorf("vdf: unexpected %s", s)
+			return fmt.Errorf("vdf: unexpected {")
 		}
 		if current == nil {
 			current = new(Node)
@@ -264,6 +278,7 @@ func (n *Node) readAsText(r *bufio.Reader) error {
 		last = current
 		current = nil
 		if err != nil {
+			last.cf.after += prefix
 			return eofOK(err)
 		}
 	}
@@ -299,7 +314,7 @@ func readToken(r *bufio.Reader) (prefix, s string, wasQuoted, wasConditional boo
 	}
 
 	buf := []byte{c}
-	conditionalStart := false
+	conditionalStart := c == '['
 	for {
 		c, err = r.ReadByte()
 		if err != nil {

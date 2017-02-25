@@ -99,6 +99,10 @@ func (n *Node) ClearFormatting() {
 	for c := n.FirstChild(); c != nil; c = c.NextChild() {
 		c.ClearFormatting()
 	}
+
+	if n.parent == nil && n.next != nil {
+		n.next.ClearFormatting()
+	}
 }
 
 type customFormat struct {
