@@ -51,6 +51,12 @@ func (n *Node) Append(c *Node) {
 	c.parent = n
 	*f = c
 	c.prev = l
+
+	if n.value != nil && n.cf != nil {
+		n.cf.between += "\n{\n"
+		n.cf.after += "\n}\n"
+	}
+	n.value = nil
 }
 
 func (n *Node) Remove() {

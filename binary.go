@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+// EPackType from KVPacker in Source SDK 2013:
+// https://github.com/ValveSoftware/source-sdk-2013/blob/master/mp/src/public/tier1/kvpacker.h
 const (
 	ptNone       = 0
 	ptString     = 1
@@ -38,28 +40,7 @@ func (n *Node) MarshalBinary() ([]byte, error) {
 
 func (n *Node) writeAsBinary(w io.Writer) error {
 	for c := n; c != nil; c = c.NextChild() {
-		var err error
-		switch c.value.(type) {
-		case nil:
-			_, err = w.Write([]byte{ptNone})
-		case string:
-			_, err = w.Write([]byte{ptString})
-		case int32:
-			_, err = w.Write([]byte{ptInt})
-		case float32:
-			_, err = w.Write([]byte{ptFloat})
-		case uint32:
-			_, err = w.Write([]byte{ptPtr})
-		case []uint16:
-			_, err = w.Write([]byte{ptWString})
-		case color.NRGBA:
-			_, err = w.Write([]byte{ptColor})
-		case uint64:
-			_, err = w.Write([]byte{ptUint64})
-		default:
-			panic("invalid vdf.Node")
-		}
-		if err != nil {
+		if _, err := w.Write([]byte{packType(c.value)}); err != nil {
 			return err
 		}
 
@@ -67,13 +48,14 @@ func (n *Node) writeAsBinary(w io.Writer) error {
 		if i := strings.IndexByte(name, 0); i != -1 {
 			name = name[:i]
 		}
-		if _, err = io.WriteString(w, name); err != nil {
+		if _, err := io.WriteString(w, name); err != nil {
 			return err
 		}
-		if _, err = w.Write([]byte{0}); err != nil {
+		if _, err := w.Write([]byte{0}); err != nil {
 			return err
 		}
 
+		var err error
 		switch v := c.value.(type) {
 		case nil:
 			err = c.child.writeAsBinary(w)
@@ -104,7 +86,7 @@ func (n *Node) writeAsBinary(w io.Writer) error {
 		case uint64:
 			err = binary.Write(w, binary.LittleEndian, &v)
 		default:
-			panic("unreachable")
+			panic("invalid vdf.Node")
 		}
 		if err != nil {
 			return err
@@ -116,18 +98,42 @@ func (n *Node) writeAsBinary(w io.Writer) error {
 	return nil
 }
 
+// packType returns the EPackType for the value inside the interface.
+func packType(v interface{}) byte {
+	switch v.(type) {
+	case nil:
+		return ptNone
+	case string:
+		return ptString
+	case int32:
+		return ptInt
+	case float32:
+		return ptFloat
+	case uint32:
+		return ptPtr
+	case []uint16:
+		return ptWString
+	case color.NRGBA:
+		return ptColor
+	case uint64:
+		return ptUint64
+	default:
+		panic("invalid vdf.Node")
+	}
+}
+
 func (n *Node) UnmarshalBinary(b []byte) error {
 	*n = Node{}
 	return n.readAsBinary(bufio.NewReader(bytes.NewReader(b)), nil)
 }
 
 func (n *Node) readAsBinary(r *bufio.Reader, parent *Node) error {
-	packType, err := r.ReadByte()
+	pt, err := r.ReadByte()
 	if err != nil {
 		return err
 	}
 
-	for c := n; packType != ptNullMarker; {
+	for c := n; pt != ptNullMarker; {
 		c.parent = parent
 		name, err := r.ReadString(0)
 		if err != nil {
@@ -135,75 +141,64 @@ func (n *Node) readAsBinary(r *bufio.Reader, parent *Node) error {
 		}
 		c.SetName(strings.TrimSuffix(name, "\x00"))
 
-		switch packType {
+		switch pt {
 		case ptNone:
 			var sub Node
 			c.Append(&sub)
 			sub.parent = nil
-			if err := sub.readAsBinary(r, c); err != nil {
-				return err
-			}
+			err = sub.readAsBinary(r, c)
 			if sub.parent == nil {
 				c.child = nil
 			}
 		case ptString:
-			v, err := r.ReadString(0)
-			if err != nil {
-				return err
-			}
+			var v string
+			v, err = r.ReadString(0)
 			c.value = strings.TrimSuffix(v, "\x00")
 		case ptWString:
 			var length uint16
-			if err := binary.Read(r, binary.LittleEndian, &length); err != nil {
+			if err = binary.Read(r, binary.LittleEndian, &length); err != nil {
 				return err
 			}
 			v := make([]uint16, length)
 			for i := range v {
-				if err := binary.Read(r, binary.LittleEndian, &v[i]); err != nil {
+				if err = binary.Read(r, binary.LittleEndian, &v[i]); err != nil {
 					return err
 				}
 			}
 			c.value = v
 		case ptInt:
 			var v int32
-			if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
-				return err
-			}
+			err = binary.Read(r, binary.LittleEndian, &v)
 			c.value = v
 		case ptUint64:
 			var v uint64
-			if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
-				return err
-			}
+			err = binary.Read(r, binary.LittleEndian, &v)
 			c.value = v
 		case ptFloat:
 			var v float32
-			if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
-				return err
-			}
+			err = binary.Read(r, binary.LittleEndian, &v)
 			c.value = v
 		case ptColor:
 			var v color.NRGBA
-			if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
-				return err
-			}
+			err = binary.Read(r, binary.LittleEndian, &v)
 			c.value = v
 		case ptPtr:
 			var v uint32
-			if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
-				return err
-			}
+			err = binary.Read(r, binary.LittleEndian, &v)
 			c.value = v
 		default:
-			return fmt.Errorf("vdf: unknown pack type %d", packType)
+			err = fmt.Errorf("vdf: unknown pack type %d", pt)
 		}
-
-		packType, err = r.ReadByte()
 		if err != nil {
 			return err
 		}
 
-		if packType == ptNullMarker {
+		pt, err = r.ReadByte()
+		if err != nil {
+			return err
+		}
+
+		if pt == ptNullMarker {
 			break
 		}
 

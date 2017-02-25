@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"image/color"
 	"strconv"
+	"strings"
+	"unicode"
 	"unicode/utf16"
 )
 
@@ -18,7 +20,7 @@ func (n *Node) String() string {
 	case string:
 		return v
 	case int32:
-		return strconv.FormatInt(int64(v), 10)
+		return strconv.Itoa(int(v))
 	case float32:
 		return strconv.FormatFloat(float64(v), 'g', -1, 32)
 	case uint32:
@@ -39,6 +41,10 @@ func (n *Node) SetString(s string) {
 	}
 
 	n.value = s
+
+	if n.cf != nil && n.cf.unquotedValue && (strings.IndexFunc(s, unicode.IsSpace) != -1 || strings.ContainsAny(s, "\"{}")) {
+		n.cf.unquotedKey = false
+	}
 }
 
 func (n *Node) Int() int32 {
@@ -190,6 +196,10 @@ func (n *Node) SetWString(s []uint16) {
 	c := make([]uint16, len(s))
 	copy(c, s)
 	n.value = c
+
+	if n.cf != nil {
+		n.cf.unquotedValue = false
+	}
 }
 
 func (n *Node) Color() color.NRGBA {
@@ -234,6 +244,10 @@ func (n *Node) SetColor(c color.NRGBA) {
 	}
 
 	n.value = c
+
+	if n.cf != nil {
+		n.cf.unquotedValue = false
+	}
 }
 
 func (n *Node) Uint64() uint64 {

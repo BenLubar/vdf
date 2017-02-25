@@ -28,6 +28,7 @@ func (n *Node) writeIndent(w io.Writer, indent int) error {
 	if n.cf != nil {
 		return n.writeCustom(w, indent)
 	}
+
 	if _, err := io.WriteString(w, strings.Repeat("\t", indent)); err != nil {
 		return err
 	}
@@ -38,66 +39,24 @@ func (n *Node) writeIndent(w io.Writer, indent int) error {
 		return err
 	}
 	if n.value != nil {
-		if err := writeString(w, n.String()); err != nil {
-			return err
-		}
-		if n.condition != "" {
-			if _, err := fmt.Fprintf(w, " [%s]", n.condition); err != nil {
-				return err
-			}
-		}
-		if _, err := io.WriteString(w, "\n"); err != nil {
-			return err
-		}
-		return nil
+		return n.writeValue(w)
 	}
-	if n.condition != "" {
-		if _, err := fmt.Fprintf(w, "[%s] ", n.condition); err != nil {
-			return err
-		}
-	}
-	if _, err := io.WriteString(w, "{\n"); err != nil {
-		return err
-	}
-	for c := n.FirstChild(); c != nil; c = c.NextChild() {
-		if err := c.writeIndent(w, indent+1); err != nil {
-			return err
-		}
-	}
-	if _, err := io.WriteString(w, strings.Repeat("\t", indent)); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(w, "}\n"); err != nil {
-		return err
-	}
-	return nil
+	return n.writeIndentChildren(w, indent)
 }
 
 func (n *Node) writeCustom(w io.Writer, indent int) error {
 	if _, err := io.WriteString(w, n.cf.before); err != nil {
 		return err
 	}
-	if n.cf.unquotedKey {
-		if _, err := io.WriteString(w, n.name); err != nil {
-			return err
-		}
-	} else {
-		if err := writeString(w, n.name); err != nil {
-			return err
-		}
+	if err := writePossiblyQuoted(w, n.name, n.cf.unquotedKey); err != nil {
+		return err
 	}
 	if n.value != nil {
 		if _, err := io.WriteString(w, n.cf.between); err != nil {
 			return err
 		}
-		if n.cf.unquotedValue {
-			if _, err := io.WriteString(w, n.String()); err != nil {
-				return err
-			}
-		} else {
-			if err := writeString(w, n.String()); err != nil {
-				return err
-			}
+		if err := writePossiblyQuoted(w, n.String(), n.cf.unquotedValue); err != nil {
+			return err
 		}
 		if _, err := io.WriteString(w, n.cf.condition); err != nil {
 			return err
@@ -107,10 +66,8 @@ func (n *Node) writeCustom(w io.Writer, indent int) error {
 				return err
 			}
 		}
-		if _, err := io.WriteString(w, n.cf.after); err != nil {
-			return err
-		}
-		return nil
+		_, err := io.WriteString(w, n.cf.after)
+		return err
 	}
 	if _, err := io.WriteString(w, n.cf.condition); err != nil {
 		return err
@@ -128,10 +85,54 @@ func (n *Node) writeCustom(w io.Writer, indent int) error {
 			return err
 		}
 	}
-	if _, err := io.WriteString(w, n.cf.after); err != nil {
+	_, err := io.WriteString(w, n.cf.after)
+	return err
+}
+
+func (n *Node) writeValue(w io.Writer) error {
+	if err := writeString(w, n.String()); err != nil {
+		return err
+	}
+	if n.condition != "" {
+		if _, err := fmt.Fprintf(w, " [%s]", n.condition); err != nil {
+			return err
+		}
+	}
+	if _, err := io.WriteString(w, "\n"); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (n *Node) writeIndentChildren(w io.Writer, indent int) error {
+	if n.condition != "" {
+		if _, err := fmt.Fprintf(w, "[%s] ", n.condition); err != nil {
+			return err
+		}
+	}
+	if _, err := io.WriteString(w, "{\n"); err != nil {
+		return err
+	}
+	for c := n.FirstChild(); c != nil; c = c.NextChild() {
+		if err := c.writeIndent(w, indent+1); err != nil {
+			return err
+		}
+	}
+	if _, err := io.WriteString(w, strings.Repeat("\t", indent)); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, "}\n")
+	return err
+}
+
+func writePossiblyQuoted(w io.Writer, s string, unquoted bool) error {
+	var err error
+	if unquoted {
+		_, err = io.WriteString(w, s)
+	} else {
+		err = writeString(w, s)
+	}
+	return err
 }
 
 func writeString(w io.Writer, s string) error {
@@ -262,62 +263,29 @@ func (n *Node) readAsText(r *bufio.Reader) error {
 
 		last = current
 		current = nil
-		if err == io.EOF {
-			return nil
-		}
 		if err != nil {
-			return err
+			return eofOK(err)
 		}
 	}
 }
 
-func readToken(r *bufio.Reader) (prefix, s string, wasQuoted, wasConditional bool, err error) {
-	var prefixBuf []byte
-	for {
-		for {
-			b, err := r.ReadByte()
-			if err != nil {
-				return string(prefixBuf), "", false, false, err
-			}
-			if !unicode.IsSpace(rune(b)) {
-				if err = r.UnreadByte(); err != nil {
-					return string(prefixBuf), "", false, false, err
-				}
-				break
-			}
-			prefixBuf = append(prefixBuf, b)
-		}
-
-		peek, err := r.Peek(2)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return string(prefixBuf), "", false, false, err
-		}
-		if peek[0] != '/' || peek[1] != '/' {
-			break
-		}
-
-		if _, err := r.Discard(2); err != nil {
-			return string(prefixBuf), "", false, false, err
-		}
-		prefixBuf = append(prefixBuf, '/', '/')
-
-		line, err := r.ReadSlice('\n')
-		prefixBuf = append(prefixBuf, line...)
-		if err != nil {
-			return string(prefixBuf), "", false, false, err
-		}
+func eofOK(err error) error {
+	if err == io.EOF {
+		return nil
 	}
-	prefix = string(prefixBuf)
+	return err
+}
+
+func readToken(r *bufio.Reader) (prefix, s string, wasQuoted, wasConditional bool, err error) {
+	prefix, err = readPrefix(r)
+	if err != nil {
+		return
+	}
 
 	c, err := r.ReadByte()
 	if err != nil {
-		return prefix, "", false, false, err
+		return
 	}
-
-	var buf []byte
 
 	if c == '"' {
 		wasQuoted = true
@@ -326,27 +294,21 @@ func readToken(r *bufio.Reader) (prefix, s string, wasQuoted, wasConditional boo
 	}
 
 	if c == '{' || c == '}' {
-		return prefix, string(c), false, false, err
+		s = string(c)
+		return
 	}
 
-	buf = append(buf, c)
+	buf := []byte{c}
 	conditionalStart := false
 	for {
 		c, err = r.ReadByte()
-		if err == io.EOF {
-			err = nil
-			break
-		}
 		if err != nil {
-			s = string(buf)
-			return
+			err = eofOK(err)
+			break
 		}
 
 		if c == '"' || c == '{' || c == '}' {
-			if err = r.UnreadByte(); err != nil {
-				s = string(buf)
-				return
-			}
+			err = r.UnreadByte()
 			break
 		}
 
@@ -359,10 +321,7 @@ func readToken(r *bufio.Reader) (prefix, s string, wasQuoted, wasConditional boo
 		}
 
 		if unicode.IsSpace(rune(c)) {
-			if err = r.UnreadByte(); err != nil {
-				s = string(buf)
-				return
-			}
+			err = r.UnreadByte()
 			break
 		}
 
@@ -371,6 +330,56 @@ func readToken(r *bufio.Reader) (prefix, s string, wasQuoted, wasConditional boo
 
 	s = string(buf)
 	return
+}
+
+func readPrefix(r *bufio.Reader) (string, error) {
+	var buf []byte
+	var err error
+	for {
+		if buf, err = readSpace(r, buf); err != nil {
+			break
+		}
+		var foundComment bool
+		if buf, foundComment, err = readComment(r, buf); err != nil || !foundComment {
+			break
+		}
+	}
+	return string(buf), err
+}
+
+func readSpace(r io.ByteScanner, buf []byte) ([]byte, error) {
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			return buf, err
+		}
+		if !unicode.IsSpace(rune(b)) {
+			if err = r.UnreadByte(); err != nil {
+				return buf, err
+			}
+			return buf, nil
+		}
+		buf = append(buf, b)
+	}
+}
+
+func readComment(r *bufio.Reader, buf []byte) ([]byte, bool, error) {
+	peek, err := r.Peek(2)
+	if err != nil {
+		return buf, false, eofOK(err)
+	}
+	if peek[0] != '/' || peek[1] != '/' {
+		return buf, false, nil
+	}
+
+	if _, err = r.Discard(2); err != nil {
+		return buf, false, err
+	}
+	buf = append(buf, '/', '/')
+
+	line, err := r.ReadSlice('\n')
+	buf = append(buf, line...)
+	return buf, true, err
 }
 
 func readLineEnding(r *bufio.Reader) (string, error) {
@@ -396,30 +405,24 @@ func readLineEnding(r *bufio.Reader) (string, error) {
 	}
 
 	peek, err := r.Peek(2)
-	if err == io.EOF {
-		return string(buf), nil
-	}
 	if err != nil {
-		return string(buf), err
+		return string(buf), eofOK(err)
 	}
 	if peek[0] != '/' || peek[1] != '/' {
 		return string(buf), nil
 	}
 
-	if _, err := r.Discard(2); err != nil {
-		return string(buf), nil
+	if _, err = r.Discard(2); err != nil {
+		return string(buf), err
 	}
 	buf = append(buf, '/', '/')
 
 	line, err := r.ReadSlice('\n')
 	buf = append(buf, line...)
-	if err == io.EOF {
-		return string(buf), nil
-	}
-	return string(buf), err
+	return string(buf), eofOK(err)
 }
 
-func readQuoted(r *bufio.Reader) (string, error) {
+func readQuoted(r io.ByteScanner) (string, error) {
 	var buf []byte
 	for {
 		c, err := r.ReadByte()
